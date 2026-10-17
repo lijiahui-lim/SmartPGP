@@ -1219,6 +1219,19 @@ public final class SmartPGPApplet extends Applet implements ExtendedLength {
                     ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
                     return;
                 }
+                /* Reject DOs that would leave keyDerivationIsActive()
+                 * true while keyDerivationSize() returns 0: an active
+                 * KDF-DO (len>=3, tag 0x81, [2]!=0) needs len>=6 with a
+                 * supported hash id at [5]; anything else makes every
+                 * PIN verification fail until factory reset. */
+                if((lc >= 3) &&
+                   (buf[0] == (byte)0x81) &&
+                   (buf[2] != (byte)0) &&
+                   ((lc < 6) ||
+                    ((buf[5] != (byte)0x08) && (buf[5] != (byte)0x0A)))) {
+                    ISOException.throwIt(ISO7816.SW_WRONG_DATA);
+                    return;
+                }
                 JCSystem.beginTransaction();
                 if(data.key_derivation_function_length > 0) {
                     Util.arrayFillNonAtomic(data.key_derivation_function, (short)0, data.key_derivation_function_length, (byte)0);

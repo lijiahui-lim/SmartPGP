@@ -11,7 +11,7 @@
 | 项目 | 值 |
 |---|---|
 | CAP 文件 | `SmartPGPApplet.cap`（约 118 KB，bytecode verifier 通过） |
-| CAP sha256（参考） | `72ccc048d3d09a5ad21e499157b064e439281e3f334a3be036550062e10d575a` |
+| CAP sha256（参考） | `43e7308687f185f871519f23d21e68dac7926484b7d1abaa201ab2c73b62a8aa` |
 | Applet AID | `D276000124010304AFAF000000000000`（OpenPGP card 3.4） |
 | 密钥 | 3 × RSA-2048（SIG / DEC / AUT），私钥卡内＋本地加密备份 |
 | 证书 | 3 × X.509 自签 DER（812 / 814 / 822 字节，卡片上限 1152） |
@@ -73,7 +73,7 @@ git apply repro.patch
 echo "keys/" >> .gitignore
 ```
 
-### 2.1 修复摘要（6 文件，+109/-44）
+### 2.1 修复摘要（6 文件，+123/-44）
 
 | # | 文件 | 修复内容 | 级别 |
 |---|---|---|---|
@@ -87,8 +87,9 @@ echo "keys/" >> .gitignore
 | 8 | `PGPKey.java` | RSA 模长白名单 `{2048,3072,4096}`（原仅查 ≥2048，可设硬件不支持的 0x7FFF 等；与 `writeAlgorithmInformation` 广播集一致） | 中 |
 | 9 | `PGPKey.java` | 凭证清除顺序错误（先归零长度导致旧凭证残留 EEPROM）＋加事务 | 低 |
 | 10 | `SmartPGPApplet.java` | `minlen` byte 溢位绕过 PIN 长度检查（3 处）＋ `key_derivation_function_length` 截断 | 低 |
-| 11 | `SecureMessaging.java` | `clearSession` 检查错对象（`senc`→`sreceiptmac`） | 低 |
-| 12 | `Persistent.java` | 建构子 typo（`do_0102_length`）＋ `user_puk_length` 赋值类型风格 | 卫生 |
+| 11 | `SmartPGPApplet.java` | PUT DATA `0xF9` 写入前校验 KDF-DO：拒绝「`keyDerivationIsActive()` 为真（len≥3、`[0]==0x81`、`[2]≠0`）但 `keyDerivationSize()==0`（len<6 或 `[5]∉{0x08,0x0A}`）」的畸形 DO——否则所有 PIN 验证恒失败，只能恢复出厂（#10 截断修复把可达长度域扩到 128..255 后暴露；旧代码 6..127 亦可触发，属既有问题一并闭合） | 低 |
+| 12 | `SecureMessaging.java` | `clearSession` 检查错对象（`senc`→`sreceiptmac`）；新增越界守卫与相邻失败路径一致地 `clearSession` | 低 |
+| 13 | `Persistent.java` | 建构子 typo（`do_0102_length`）＋ `user_puk_length` 赋值类型风格 | 卫生 |
 
 **行为等价性**（已在代码复核中确认）：
 
@@ -233,7 +234,7 @@ index 175d6a5..f06b149 100644
          byte[] emptyPin = new byte[1];
          while(user_puk.getTriesRemaining() > 0) {
 diff --git a/src/fr/anssi/smartpgp/SecureMessaging.java b/src/fr/anssi/smartpgp/SecureMessaging.java
-index da1d29f..ccc24cf 100644
+index da1d29f..01bb394 100644
 --- a/src/fr/anssi/smartpgp/SecureMessaging.java
 +++ b/src/fr/anssi/smartpgp/SecureMessaging.java
 @@ -89,7 +89,7 @@ public final class SecureMessaging {
@@ -245,13 +246,14 @@ index da1d29f..ccc24cf 100644
              sreceiptmac.clearKey();
          }
          if((smac != null) && smac.isInitialized()) {
-@@ -335,6 +335,13 @@ public final class SecureMessaging {
+@@ -335,6 +335,14 @@ public final class SecureMessaging {
              return 0;
          }
  
 +        /* The computed MAC and the MAC chaining value are written at
 +         * buf[dataLen]: make sure a full block fits there. */
 +        if(dataLen > (short)(Constants.INTERNAL_BUFFER_MAX_LENGTH - Constants.AES_BLOCK_SIZE)) {
++            clearSession(transients);
 +            ISOException.throwIt(Constants.SW_MEMORY_FAILURE);
 +            return 0;
 +        }
@@ -259,7 +261,7 @@ index da1d29f..ccc24cf 100644
          final byte[] buf = transients.buffer;
  
          macer.init(smac);
-@@ -420,6 +427,14 @@ public final class SecureMessaging {
+@@ -420,6 +428,14 @@ public final class SecureMessaging {
              return 0;
          }
  
@@ -275,7 +277,7 @@ index da1d29f..ccc24cf 100644
  
          if(dataLen > 0) {
 diff --git a/src/fr/anssi/smartpgp/SmartPGPApplet.java b/src/fr/anssi/smartpgp/SmartPGPApplet.java
-index 33e703d..cc8713f 100644
+index 33e703d..02bca0e 100644
 --- a/src/fr/anssi/smartpgp/SmartPGPApplet.java
 +++ b/src/fr/anssi/smartpgp/SmartPGPApplet.java
 @@ -111,7 +111,9 @@ public final class SmartPGPApplet extends Applet implements ExtendedLength {
@@ -361,7 +363,25 @@ index 33e703d..cc8713f 100644
              data.user_pin.update(transients.buffer, off, data.user_pin_length);
              JCSystem.commitTransaction();
              data.user_pin.resetAndUnblock();
-@@ -1222,7 +1224,7 @@ public final class SmartPGPApplet extends Applet implements ExtendedLength {
+@@ -1217,12 +1219,25 @@ public final class SmartPGPApplet extends Applet implements ExtendedLength {
+                     ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+                     return;
+                 }
++                /* Reject DOs that would leave keyDerivationIsActive()
++                 * true while keyDerivationSize() returns 0: an active
++                 * KDF-DO (len>=3, tag 0x81, [2]!=0) needs len>=6 with a
++                 * supported hash id at [5]; anything else makes every
++                 * PIN verification fail until factory reset. */
++                if((lc >= 3) &&
++                   (buf[0] == (byte)0x81) &&
++                   (buf[2] != (byte)0) &&
++                   ((lc < 6) ||
++                    ((buf[5] != (byte)0x08) && (buf[5] != (byte)0x0A)))) {
++                    ISOException.throwIt(ISO7816.SW_WRONG_DATA);
++                    return;
++                }
+                 JCSystem.beginTransaction();
+                 if(data.key_derivation_function_length > 0) {
                      Util.arrayFillNonAtomic(data.key_derivation_function, (short)0, data.key_derivation_function_length, (byte)0);
                  }
                  Util.arrayCopyNonAtomic(buf, (short)0, data.key_derivation_function, (short)0, lc);
@@ -370,7 +390,7 @@ index 33e703d..cc8713f 100644
                  JCSystem.commitTransaction();
                  break;
  
-@@ -1372,6 +1374,12 @@ public final class SmartPGPApplet extends Applet implements ExtendedLength {
+@@ -1372,6 +1387,12 @@ public final class SmartPGPApplet extends Applet implements ExtendedLength {
                      return 0;
                  }
  
@@ -383,7 +403,7 @@ index 33e703d..cc8713f 100644
                  if((data.aes_key == null) || !data.aes_key.isInitialized()) {
                      ISOException.throwIt(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
                      return 0;
-@@ -1403,6 +1411,12 @@ public final class SmartPGPApplet extends Applet implements ExtendedLength {
+@@ -1403,6 +1424,12 @@ public final class SmartPGPApplet extends Applet implements ExtendedLength {
                  return 0;
              }
  
@@ -396,7 +416,7 @@ index 33e703d..cc8713f 100644
              if((data.aes_key == null) || !data.aes_key.isInitialized()) {
                  ISOException.throwIt(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
                  return 0;
-@@ -1478,6 +1492,10 @@ public final class SmartPGPApplet extends Applet implements ExtendedLength {
+@@ -1478,6 +1505,10 @@ public final class SmartPGPApplet extends Applet implements ExtendedLength {
              return;
          }
  
@@ -407,7 +427,7 @@ index 33e703d..cc8713f 100644
          if(data.admin_pin.getTriesRemaining() <= 0) {
              data.isTerminated = true;
              return;
-@@ -1582,40 +1600,40 @@ public final class SmartPGPApplet extends Applet implements ExtendedLength {
+@@ -1582,40 +1613,40 @@ public final class SmartPGPApplet extends Applet implements ExtendedLength {
  
          } else {
  
@@ -473,7 +493,7 @@ index 33e703d..cc8713f 100644
  
                  switch(apdubuf[ISO7816.OFFSET_INS]) {
                  case Constants.INS_SELECT_DATA:
-@@ -1681,6 +1699,15 @@ public final class SmartPGPApplet extends Applet implements ExtendedLength {
+@@ -1681,6 +1712,15 @@ public final class SmartPGPApplet extends Applet implements ExtendedLength {
  
              } catch (ISOException e) {
                  sw = e.getReason();

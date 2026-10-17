@@ -338,6 +338,7 @@ public final class SecureMessaging {
         /* The computed MAC and the MAC chaining value are written at
          * buf[dataLen]: make sure a full block fits there. */
         if(dataLen > (short)(Constants.INTERNAL_BUFFER_MAX_LENGTH - Constants.AES_BLOCK_SIZE)) {
+            clearSession(transients);
             ISOException.throwIt(Constants.SW_MEMORY_FAILURE);
             return 0;
         }
