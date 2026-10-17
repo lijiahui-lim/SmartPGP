@@ -74,8 +74,10 @@ public final class PGPKey {
         }
 
         if(certificate_length > 0) {
-            certificate_length = (short)0;
+            Common.beginTransaction(isRegistering);
             Util.arrayFillNonAtomic(certificate, (short)0, certificate_length, (byte)0);
+            certificate_length = (short)0;
+            Common.commitTransaction(isRegistering);
         }
 
         if(!is_secure_messaging_key) {
@@ -164,7 +166,8 @@ public final class PGPKey {
                 ISOException.throwIt(ISO7816.SW_WRONG_DATA);
                 return;
             }
-            if((Util.getShort(buf, (short)(off + 1)) < 2048) ||
+            final short modbits = Util.getShort(buf, (short)(off + 1));
+            if(((modbits != (short)2048) && (modbits != (short)3072) && (modbits != (short)4096)) ||
                (Util.getShort(buf, (short)(off + 3)) != 0x11) ||
                (buf[(short)(off + 5)] < 0) || (buf[(short)(off + 5)] > 3)) {
                 ISOException.throwIt(ISO7816.SW_WRONG_DATA);
@@ -313,7 +316,7 @@ public final class PGPKey {
         byte i = 0;
         while(i < tag_count) {
 
-            if((short)((short)(off - boff) + tag_len[i]) > len) {
+            if((tag_len[i] < 0) || ((short)(off - boff) > (short)(len - tag_len[i]))) {
                 ISOException.throwIt(ISO7816.SW_WRONG_DATA);
                 return null;
             }
@@ -407,7 +410,7 @@ public final class PGPKey {
         byte i = 0;
         while(i < tag_count) {
 
-            if((short)((short)(off - boff) + tag_len[i]) > len) {
+            if((tag_len[i] < 0) || ((short)(off - boff) > (short)(len - tag_len[i]))) {
                 ISOException.throwIt(ISO7816.SW_WRONG_DATA);
                 return null;
             }
@@ -636,6 +639,12 @@ public final class PGPKey {
                 return 0;
             }
 
+            /* The signature is written at buf[lc]: make sure it fits */
+            if((short)(lc + Common.bitsToBytes(rsaModulusBitSize())) > Constants.INTERNAL_BUFFER_MAX_LENGTH) {
+                ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+                return 0;
+            }
+
             common.cipher_rsa_pkcs1.init(priv, Cipher.MODE_ENCRYPT);
 
             off = common.cipher_rsa_pkcs1.doFinal(buf, (short)0, lc,
@@ -749,6 +758,12 @@ public final class PGPKey {
             final short modulus_size = Common.bitsToBytes(rsaModulusBitSize());
 
             if(lc != (short)(modulus_size + 1)) {
+                ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+                return 0;
+            }
+
+            /* The plaintext is written at buf[lc]: make sure it fits */
+            if((short)(lc + modulus_size) > Constants.INTERNAL_BUFFER_MAX_LENGTH) {
                 ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
                 return 0;
             }

@@ -89,7 +89,7 @@ public final class SecureMessaging {
 
         macer.clear();
         Util.arrayFillNonAtomic(mac_chaining, (short)0, (short)mac_chaining.length, (byte)0);
-        if((sreceiptmac != null) && senc.isInitialized()) {
+        if((sreceiptmac != null) && sreceiptmac.isInitialized()) {
             sreceiptmac.clearKey();
         }
         if((smac != null) && smac.isInitialized()) {
@@ -335,6 +335,13 @@ public final class SecureMessaging {
             return 0;
         }
 
+        /* The computed MAC and the MAC chaining value are written at
+         * buf[dataLen]: make sure a full block fits there. */
+        if(dataLen > (short)(Constants.INTERNAL_BUFFER_MAX_LENGTH - Constants.AES_BLOCK_SIZE)) {
+            ISOException.throwIt(Constants.SW_MEMORY_FAILURE);
+            return 0;
+        }
+
         final byte[] buf = transients.buffer;
 
         macer.init(smac);
@@ -417,6 +424,14 @@ public final class SecureMessaging {
 
         if(!isSessionAvailable()) {
             ISOException.throwIt(ISO7816.SW_SECURITY_STATUS_NOT_SATISFIED);
+            return 0;
+        }
+
+        /* The padding block and the MAC are written at buf[dataLen]:
+         * make sure a full block fits there. */
+        if((dataLen < 0) ||
+           (dataLen > (short)(Constants.INTERNAL_BUFFER_MAX_LENGTH - Constants.AES_BLOCK_SIZE))) {
+            ISOException.throwIt(Constants.SW_MEMORY_FAILURE);
             return 0;
         }
 

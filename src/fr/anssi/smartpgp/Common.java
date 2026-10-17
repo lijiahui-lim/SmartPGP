@@ -138,12 +138,19 @@ public final class Common {
             }
             return Util.makeShort((byte)0, buf[(short)(off + 1)]);
 
-        case (byte)0x82:
+        case (byte)0x82: {
             if(len < 3) {
                 ISOException.throwIt(ISO7816.SW_WRONG_DATA);
                 return (short)0;
             }
-            return Util.getShort(buf, (short)(off + 1));
+            final short v = Util.getShort(buf, (short)(off + 1));
+            /* Reject negative lengths: the 16-bit length is signed in Java */
+            if(v < 0) {
+                ISOException.throwIt(ISO7816.SW_WRONG_DATA);
+                return (short)0;
+            }
+            return v;
+        }
 
         default:
             ISOException.throwIt(ISO7816.SW_WRONG_DATA);

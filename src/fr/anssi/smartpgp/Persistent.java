@@ -112,7 +112,7 @@ public final class Persistent {
         do_0101_length = 0;
 
         do_0102 = new byte[Constants.specialDoMaxLength()];
-        do_0101_length = 0;
+        do_0102_length = 0;
 
         do_0103 = new byte[Constants.specialDoMaxLength()];
         do_0103_length = 0;
@@ -240,7 +240,7 @@ public final class Persistent {
         user_pin.resetAndUnblock();
 
         Common.beginTransaction(isRegistering);
-        user_puk_length = (short)0;
+        user_puk_length = (byte)0;
         /* Ensures any previously defined PUK code is blocked at factory reset */
         byte[] emptyPin = new byte[1];
         while(user_puk.getTriesRemaining() > 0) {
